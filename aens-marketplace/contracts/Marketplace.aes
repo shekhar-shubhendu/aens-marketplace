@@ -1,0 +1,97 @@
+@compiler >= 4
+/*
+* This contract act as a atomic swap for aens
+*/
+contract Marketplace =
+  
+  record sale = {
+    price: int,                          // price required to buy
+    owner: address,                      // address of the current owner TODO: check at runtime
+    recipient: address,                  // reserved recipient if the sale is direct 
+    locked_until: int                    // height until the swap is locked
+  }
+  
+  record state = {
+    store_open       : int,              // indicates whenever the store will fullfill orders
+    sales            : map(string, swap),// map of name, swap
+    merchant         : address,          // address of the marketplace owner (it get's the fees)
+    props            : map(string, int)  // general properties
+  } 
+
+  stateful entrypoint init() : state = {
+      sales     = {},
+      props      = {
+          "sale_commission": 1,          // this is a percentage for the marketplace
+          "sale_lock_period": 480,       // time in blocks
+          "offer_lock_period": 480       // time in blocks
+      } 
+      merchant   = Contract.creator      // owner of the marketplace
+    }
+
+  /*
+  * offer: offer a domain for sale 
+  */
+  stateful entrypoint offer(name: string, price: int, sig: signature) = 
+    // check whatever the named is claimed
+    //    if it is expired remove the name and abort
+    // transfer the name to the contract, the sig = (owner address + name_hash + Contract.address )
+    // calculate the price as price + sale fees
+    // add the name+price to the sales map 
+  
+  /*
+  * delist: remove a name from sale
+  */
+  stateful entrypoint delist(name: string) =
+    // check whatever the named is on sale
+    // check whenever the owner of the name is the caller of the function
+    // check if the lock period has expired
+    // also the merchant can delist a name 
+    // remove the name from sales
+  
+  payable stateful entrypoint buy(name: string) = 
+    // get the name price
+    // check if the Call.amount is enought to transfer the name
+    // attribute the fee to the merchant 
+    // 
+
+  entrypoint get_price(name: string) = 
+    switch(Map.lookup(name, state.sales)) 
+      // if it's there return the value
+      Some(price) => price
+      None        => abort("err:exec:not_for_sale")
+  
+  // get the number of names on sale
+  entrypoint count_sales() = 
+    Map.size(state.sales)
+    
+  // set a property value
+  stateful entrypoint set_property(name: string, value: int) = 
+    if(Call.caller != state.merchant)
+      abort(String.concat("err:auth:", Address.to_str(Call.caller)))
+    put(state{props[name] = value})
+  
+
+  // get a property value
+  entrypoint get_property(name: string) = 
+    if(Call.caller != state.merchant)
+      abort(String.concat("err:auth:", Address.to_str(Call.caller)))
+    switch(Map.lookup(name, state.props)) 
+      // if it's there return the value
+      Some(val)   => val
+      None        => 0
+
+  // get the current owner
+  entrypoint get_merchant() =
+    state.merchant
+
+  // set the merchant address
+  stateful entrypoint set_merchant(merchant: address) = 
+    if(Call.caller != state.merchant)
+      abort(String.concat("err:auth:", Address.to_str(Call.caller)))
+    put(state{merchant = merchant})
+  
+  // export the data
+  stateful entrypoint export_sales() = 
+    if(Call.caller != state.merchant)
+      abort(String.concat("err:auth:", Address.to_str(Call.caller)))
+    //TODO: export the data 
