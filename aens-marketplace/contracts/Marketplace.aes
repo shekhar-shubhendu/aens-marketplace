@@ -4,66 +4,82 @@
 */
 contract Marketplace =
   
-  record sale = {
-    price: int,                          // price required to buy
-    owner: address,                      // address of the current owner TODO: check at runtime
-    recipient: address,                  // reserved recipient if the sale is direct 
-    locked_until: int                    // height until the swap is locked
-  }
+  record sale = { price: int, owner: address, recipient: address, locked_until: int }
   
-  record state = {
-    store_open       : int,              // indicates whenever the store will fullfill orders
-    sales            : map(string, swap),// map of name, swap
-    merchant         : address,          // address of the marketplace owner (it get's the fees)
-    props            : map(string, int)  // general properties
-  } 
+  record state = { sales : map(string, sale), merchant : address, props : map(string, int) } 
 
-  stateful entrypoint init() : state = {
-      sales     = {},
-      props      = {
-          "sale_commission": 1,          // this is a percentage for the marketplace
-          "sale_lock_period": 480,       // time in blocks
-          "offer_lock_period": 480       // time in blocks
-      } 
-      merchant   = Contract.creator      // owner of the marketplace
-    }
+  stateful entrypoint init() : state = { sales = {}, props = { ["sale_commission"] = 1, ["sale_lock_period"]=480, ["marketplace_open"]=1, ["min_commission"] = 100000000000000000 }, merchant = Contract.creator }
 
   /*
   * offer: offer a domain for sale 
+  * recipient - if it is the 0 account then everybody can buy, otherwhise only the recipient can
+  AENS.transfer(owner : address, new_owner : address, name_hash : hash, <signature : signature>) : unit
   */
-  stateful entrypoint offer(name: string, price: int, sig: signature) = 
-    // check whatever the named is claimed
-    //    if it is expired remove the name and abort
-    // transfer the name to the contract, the sig = (owner address + name_hash + Contract.address )
-    // calculate the price as price + sale fees
-    // add the name+price to the sales map 
+  stateful entrypoint offer(name: string, price: int, recipient: address, sig: signature) = 
+    require(Call.value >= calculate_commission(price), "amount too low")
+    AENS.transfer(Call.caller, Contract.address, name, signature = sig)
+    put(state{sales[name] = create_sale_record(price, recipient, Map.lookup_default("offer_lock_period", state.props, 0))})
   
+  function calculate_commission(price: int) =
+    let perc = price * (Map.lookup_default("sale_commission", state.props, 1) / 100)
+    let min = Map.lookup_default("min_commission", state.props, 1000000000000000000)
+    if (perc > min)
+        perc
+    else 
+        min
+
+  function create_sale_record(_price: int, _recipient: address, offset: int) =
+    { price = _price, recipient = _recipient, owner = Call.caller, locked_until = (Chain.block_height + offset)}
+
   /*
   * delist: remove a name from sale
   */
   stateful entrypoint delist(name: string) =
-    // check whatever the named is on sale
-    // check whenever the owner of the name is the caller of the function
-    // check if the lock period has expired
-    // also the merchant can delist a name 
-    // remove the name from sales
+    switch(Map.lookup(name, state.sales))
+      None        => abort("err:exec:not_found")
+      Some(sale)  => 
+        if(Call.caller != sale.owner && Call.caller != state.merchant)
+          abort(String.concat("err:auth:", Address.to_str(Call.caller)))
+        AENS.transfer(Contract.address, sale.owner, name)
+        Map.delete(name, state.sales)
   
   payable stateful entrypoint buy(name: string) = 
-    // get the name price
-    // check if the Call.amount is enought to transfer the name
-    // attribute the fee to the merchant 
-    // 
+    switch(Map.lookup(name, state.sales))
+      None        => abort("err:exec:not_found")
+      Some(sale)  => 
+        if(Call.caller != sale.owner && Call.caller != state.merchant)
+          abort(String.concat("err:auth:", Address.to_str(Call.caller)))
+        AENS.transfer(Contract.address, Call.caller, name)
+        Map.delete(name, state.sales)
+    
 
   entrypoint get_price(name: string) = 
     switch(Map.lookup(name, state.sales)) 
       // if it's there return the value
-      Some(price) => price
+      Some(sale)  => sale.price 
+      None        => abort("err:exec:not_for_sale")
+  
+  entrypoint get_sale(name: string) = 
+    switch(Map.lookup(name, state.sales)) 
+      // if it's there return the value
+      Some(sale)  => sale 
       None        => abort("err:exec:not_for_sale")
   
   // get the number of names on sale
   entrypoint count_sales() = 
     Map.size(state.sales)
-    
+
+    // export the data
+  stateful entrypoint export_sales() = 
+    if(Call.caller != state.merchant)
+      abort(String.concat("err:auth:", Address.to_str(Call.caller)))
+    state.sales
+
+  /*
+
+  PROPERTIES
+
+  */
   // set a property value
   stateful entrypoint set_property(name: string, value: int) = 
     if(Call.caller != state.merchant)
@@ -80,6 +96,11 @@ contract Marketplace =
       Some(val)   => val
       None        => 0
 
+  /*
+
+  MERCHANT
+
+  */
   // get the current owner
   entrypoint get_merchant() =
     state.merchant
@@ -90,8 +111,3 @@ contract Marketplace =
       abort(String.concat("err:auth:", Address.to_str(Call.caller)))
     put(state{merchant = merchant})
   
-  // export the data
-  stateful entrypoint export_sales() = 
-    if(Call.caller != state.merchant)
-      abort(String.concat("err:auth:", Address.to_str(Call.caller)))
-    //TODO: export the data 
